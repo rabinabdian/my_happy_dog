@@ -6,9 +6,13 @@ A Python tool for analyzing lottery draw data to identify patterns, frequencies,
 
 - Load and parse lottery data from CSV files
 - Analyze frequency of individual numbers
-- Analyze frequency of number combinations (pairs, triplets, etc.)
+- **NEW: Analyze co-occurring groups of ALL sizes** (2-6 numbers)
+- Identify not just pairs and triplets, but also 4-number, 5-number, and even complete 6-number groups that appeared together
 - Identify most common strong numbers
-- **IMPROVED: Generate combinations based on co-occurrence patterns** - prioritizes numbers that appear together frequently
+- **IMPROVED: Smart algorithm that prioritizes larger co-occurring groups**
+  - Starts with complete 6-number combinations that appeared together multiple times
+  - Falls back to 5-number groups (adds 1 number), then 4-number groups (adds 2), etc.
+  - Numbers that appeared together historically are more likely to be suggested together
 - Score combinations based on historical co-occurrence strength
 - Multiple algorithm strategies for generating suggestions
 
@@ -52,14 +56,27 @@ The script provides:
 2. Strong number frequency statistics
 3. Most common pairs of numbers appearing together
 4. Most common triplets of numbers appearing together
-5. **IMPROVED ALGORITHM**: Combinations based on co-occurrence patterns (numbers that appear together most frequently)
-6. **ALTERNATIVE**: Random mix combinations with scoring
+5. **DETAILED CO-OCCURRENCE ANALYSIS**: Shows groups of all sizes (2-6 numbers)
+   - Displays which 6-number combinations appeared together multiple times
+   - Shows 5-number, 4-number, 3-number, and 2-number groups
+   - Lists top 10 most frequent groups for each size
+6. **IMPROVED ALGORITHM**: Smart combinations prioritizing larger co-occurring groups
+   - Starts with actual 6-number combinations from historical data
+   - Uses 5-number groups and intelligently adds the best 6th number
+   - Uses 4-number groups and adds the 2 most co-occurring numbers
+7. **ALTERNATIVE**: Random mix combinations with scoring
 
 Each suggested combination includes:
 - The 6 main numbers
 - The strong number
 - A quality score showing how often those numbers appeared together historically
 - Pair co-occurrence score and average pair frequency
+
+The improved algorithm will tell you which strategy it used:
+- "Using X complete 6-number groups that appeared together!"
+- "Using 5-number groups, adding 1 more number..."
+- "Using 4-number groups, adding 2 more numbers..."
+- "Using 3-number groups, adding 3 more numbers..."
 
 ## Functions
 
@@ -82,6 +99,11 @@ Returns frequency of number combinations (pairs, triplets, etc.).
 #### `build_cooccurrence_matrix(main_rows, max_number=49)`
 Builds a matrix showing how often each pair of numbers appears together.
 
+#### `analyze_all_cooccurrence_sizes(main_rows, min_freq=2)` **[NEW]**
+Analyzes co-occurring groups of ALL sizes (2-6 numbers). Returns a dictionary with counters for each size showing which groups appeared together and how often.
+
+This is the key function that enables analyzing larger groups beyond just pairs and triplets!
+
 #### `score_combination(combo, main_rows, pair_counter=None, single_counter=None)`
 Scores a combination based on historical co-occurrence patterns. Returns:
 - `total`: Combined weighted score
@@ -89,15 +111,27 @@ Scores a combination based on historical co-occurrence patterns. Returns:
 - `frequency_score`: Sum of individual number frequencies
 - `avg_pair_freq`: Average frequency of pairs in this combination
 
+#### `print_all_cooccurrence_stats(main_rows, min_freq=2, top_n=10)` **[NEW]**
+Prints detailed statistics about co-occurring groups of all sizes (2-6). Shows the top N most frequent groups for each size.
+
 ### Combination Generation Algorithms
 
-#### `generate_combinations_from_cooccurrence(...)` **[IMPROVED ALGORITHM]**
-Generates combinations by starting with the most frequently co-occurring triplets and expanding them with numbers that co-occur most often. This algorithm prioritizes numbers that historically appear together.
+#### `generate_combinations_from_cooccurrence(...)` **[MUCH IMPROVED ALGORITHM]**
+**Major upgrade:** Now analyzes co-occurring groups of ALL sizes (2-6 numbers), not just triplets!
+
+Algorithm strategy:
+1. First, looks for complete 6-number combinations that appeared together multiple times - these are the best suggestions!
+2. Then uses 5-number groups and intelligently adds the number that co-occurs most with that group
+3. Then uses 4-number groups and adds the 2 numbers that co-occur most
+4. Finally uses 3-number groups as fallback
+
+This ensures combinations where numbers have the strongest historical co-occurrence patterns.
 
 Parameters:
 - `num_suggestions`: Number of combinations to generate (default: 10)
-- `start_with_top_n_trips`: Number of top triplets to consider as seeds (default: 20)
+- `top_n_per_size`: Top N combinations to consider per size (default: 20)
 - `strong_top_n`: Top N strong numbers to consider (default: 5)
+- `min_cooccurrence_freq`: Minimum times a group must appear together (default: 2)
 
 #### `generate_suggested_combinations(...)`
 Original algorithm that randomly mixes top singles, pairs, and triplets with scoring.
@@ -147,14 +181,24 @@ This means:
 
 ## Customization
 
-### For the Improved Co-occurrence Algorithm:
+### For the Improved Co-occurrence Algorithm (analyzes ALL sizes):
 ```python
 generate_combinations_from_cooccurrence(
     main_rows,
     strong_numbers,
-    num_suggestions=10,          # How many combinations to generate
-    start_with_top_n_trips=20,   # Top triplets to use as seeds
-    strong_top_n=5               # Top strong numbers to consider
+    num_suggestions=10,           # How many combinations to generate
+    top_n_per_size=20,            # Top N groups to consider for each size (2-6)
+    strong_top_n=5,               # Top strong numbers to consider
+    min_cooccurrence_freq=2       # Minimum times a group must appear together
+)
+```
+
+### For the Detailed Co-occurrence Analysis:
+```python
+print_all_cooccurrence_stats(
+    main_rows,
+    min_freq=2,   # Minimum frequency to display
+    top_n=10      # Show top N for each size
 )
 ```
 

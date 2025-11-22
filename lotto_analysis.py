@@ -166,44 +166,81 @@ def score_combination(combo, main_rows, pair_counter=None, single_counter=None):
     }
 
 
+def analyze_all_cooccurrence_sizes(main_rows, min_freq=2):
+    """
+    Analyze co-occurring groups of all sizes (2-6 numbers).
+
+    Args:
+        main_rows (list[list[int]]): Historical lottery data.
+        min_freq (int): Minimum frequency to include.
+
+    Returns:
+        dict: {size: Counter({combo: frequency})} for sizes 2-6
+    """
+    size_counters = {
+        2: Counter(),
+        3: Counter(),
+        4: Counter(),
+        5: Counter(),
+        6: Counter()
+    }
+
+    for row in main_rows:
+        unique_nums = sorted(set(row))
+        # Generate combinations of all sizes
+        for size in range(2, 7):
+            if len(unique_nums) >= size:
+                for combo in combinations(unique_nums, size):
+                    size_counters[size][combo] += 1
+
+    # Filter by minimum frequency
+    for size in size_counters:
+        size_counters[size] = Counter({
+            combo: freq
+            for combo, freq in size_counters[size].items()
+            if freq >= min_freq
+        })
+
+    return size_counters
+
+
 def generate_combinations_from_cooccurrence(
     main_rows,
     strong_numbers,
     num_suggestions=10,
-    start_with_top_n_trips=20,
-    strong_top_n=5
+    top_n_per_size=20,
+    strong_top_n=5,
+    min_cooccurrence_freq=2
 ):
     """
-    Generate combinations by starting with the most frequently co-occurring
-    triplets and expanding them with numbers that co-occur most with them.
+    IMPROVED: Generate combinations by analyzing co-occurring groups of ALL sizes (2-6).
+    Prioritizes larger groups that appeared together more frequently.
 
     Args:
         main_rows (list[list[int]]): Historical lottery data.
         strong_numbers (list[int]): Strong numbers from historical data.
         num_suggestions (int): Number of combinations to generate.
-        start_with_top_n_trips (int): Consider top N triplets as seeds.
+        top_n_per_size (int): Top N combinations to consider per size.
         strong_top_n (int): Consider top N strong numbers.
+        min_cooccurrence_freq (int): Minimum times a group must appear together.
 
     Returns:
         list[(list[int], int, dict)]: (6 main numbers, strong_number, score_dict)
     """
-    # Build frequency counters
-    single_counter = Counter()
-    pair_counter = Counter()
-    trip_counter = Counter()
+    # Build frequency counters for ALL combination sizes
+    print(f"Analyzing co-occurring groups of all sizes (2-6 numbers)...")
+    size_counters = analyze_all_cooccurrence_sizes(main_rows, min_freq=min_cooccurrence_freq)
 
+    # Also get single number frequencies
+    single_counter = Counter()
     for row in main_rows:
-        unique_nums = sorted(set(row))
-        single_counter.update(unique_nums)
-        for pair in combinations(unique_nums, 2):
-            pair_counter[pair] += 1
-        for trip in combinations(unique_nums, 3):
-            trip_counter[trip] += 1
+        single_counter.update(row)
 
     strong_counter = Counter(strong_numbers)
     top_strongs = [num for num, _ in strong_counter.most_common(strong_top_n)]
 
-    # Build co-occurrence lookup for each number
+    # Build co-occurrence lookup for pairs (for filling incomplete combinations)
+    pair_counter = size_counters[2]
     cooccurrence = {}
     for (num1, num2), freq in pair_counter.items():
         if num1 not in cooccurrence:
@@ -220,75 +257,141 @@ def generate_combinations_from_cooccurrence(
     suggestions = []
     seen_combos = set()
 
-    # Get top triplets as starting seeds
-    top_triplets = [trip for trip, _ in trip_counter.most_common(start_with_top_n_trips)]
+    # Print statistics about co-occurring groups
+    for size in [6, 5, 4, 3]:
+        count = len(size_counters[size])
+        if count > 0:
+            top_freq = size_counters[size].most_common(1)[0][1] if size_counters[size] else 0
+            print(f"  Found {count} groups of {size} numbers (top frequency: {top_freq})")
 
-    if not top_triplets:
-        # Fallback: use top pairs
-        top_pairs = [pair for pair, _ in pair_counter.most_common(20)]
-        if not top_pairs:
-            return []
-        # Convert pairs to triplets by adding most co-occurring number
-        for pair in top_pairs:
-            candidates = set()
-            for num in pair:
-                if num in cooccurrence:
-                    candidates.update([n for n, _ in cooccurrence[num][:10]])
-            candidates -= set(pair)
-            if candidates:
-                best_third = max(candidates,
-                               key=lambda x: pair_counter.get(tuple(sorted(pair + (x,))), 0))
-                top_triplets.append(tuple(sorted(pair + (best_third,))))
-            if len(top_triplets) >= start_with_top_n_trips:
+    # Strategy: Start with LARGEST groups first (6, then 5, then 4, then 3)
+    # This prioritizes numbers that appeared together most often
+
+    # 1. Check for complete 6-number combinations that appeared multiple times
+    if size_counters[6]:
+        print(f"\n  Using {len(size_counters[6])} complete 6-number groups that appeared together!")
+        for combo, freq in size_counters[6].most_common(top_n_per_size):
+            if len(suggestions) >= num_suggestions:
                 break
 
-    # Generate combinations
-    for trip in top_triplets:
-        if len(suggestions) >= num_suggestions:
-            break
+            combo_tuple = tuple(sorted(combo))
+            if combo_tuple in seen_combos:
+                continue
+            seen_combos.add(combo_tuple)
 
-        # Start with the triplet
-        combo_set = set(trip)
+            score_dict = score_combination(list(combo), main_rows, pair_counter, single_counter)
+            strong_num = random.choice(top_strongs) if top_strongs else (
+                random.choice(strong_numbers) if strong_numbers else None
+            )
+            suggestions.append((list(combo), strong_num, score_dict))
 
-        # Find numbers that co-occur most with current combo
-        while len(combo_set) < 6:
+    # 2. Use 5-number combinations, add 1 more number
+    if len(suggestions) < num_suggestions and size_counters[5]:
+        print(f"  Using 5-number groups, adding 1 more number...")
+        for combo, freq in size_counters[5].most_common(top_n_per_size):
+            if len(suggestions) >= num_suggestions:
+                break
+
+            combo_set = set(combo)
+
+            # Find the best number to add based on co-occurrence
             candidates = Counter()
             for num in combo_set:
                 if num in cooccurrence:
-                    for other_num, freq in cooccurrence[num]:
+                    for other_num, cofreq in cooccurrence[num]:
                         if other_num not in combo_set:
-                            candidates[other_num] += freq
+                            candidates[other_num] += cofreq
 
-            if not candidates:
-                # Fallback: add from top singles
-                remaining = [n for n, _ in single_counter.most_common(30) if n not in combo_set]
-                if remaining:
-                    combo_set.add(remaining[0])
-                else:
-                    break
-            else:
-                # Add the number with highest co-occurrence
+            if candidates:
                 best_num = candidates.most_common(1)[0][0]
                 combo_set.add(best_num)
+            else:
+                # Fallback: add most frequent single
+                remaining = [n for n, _ in single_counter.most_common(49) if n not in combo_set]
+                if remaining:
+                    combo_set.add(remaining[0])
 
-        if len(combo_set) != 6:
-            continue
+            if len(combo_set) == 6:
+                combo_tuple = tuple(sorted(combo_set))
+                if combo_tuple not in seen_combos:
+                    seen_combos.add(combo_tuple)
+                    score_dict = score_combination(list(combo_tuple), main_rows, pair_counter, single_counter)
+                    strong_num = random.choice(top_strongs) if top_strongs else (
+                        random.choice(strong_numbers) if strong_numbers else None
+                    )
+                    suggestions.append((list(combo_tuple), strong_num, score_dict))
 
-        combo_tuple = tuple(sorted(combo_set))
-        if combo_tuple in seen_combos:
-            continue
+    # 3. Use 4-number combinations, add 2 more numbers
+    if len(suggestions) < num_suggestions and size_counters[4]:
+        print(f"  Using 4-number groups, adding 2 more numbers...")
+        for combo, freq in size_counters[4].most_common(top_n_per_size):
+            if len(suggestions) >= num_suggestions:
+                break
 
-        seen_combos.add(combo_tuple)
+            combo_set = set(combo)
 
-        # Score the combination
-        score_dict = score_combination(list(combo_tuple), main_rows, pair_counter, single_counter)
+            # Add 2 numbers that co-occur most with this group
+            for _ in range(2):
+                candidates = Counter()
+                for num in combo_set:
+                    if num in cooccurrence:
+                        for other_num, cofreq in cooccurrence[num]:
+                            if other_num not in combo_set:
+                                candidates[other_num] += cofreq
 
-        # Select strong number
-        strong_num = random.choice(top_strongs) if top_strongs else (
-            random.choice(strong_numbers) if strong_numbers else None
-        )
+                if candidates:
+                    best_num = candidates.most_common(1)[0][0]
+                    combo_set.add(best_num)
+                else:
+                    remaining = [n for n, _ in single_counter.most_common(49) if n not in combo_set]
+                    if remaining:
+                        combo_set.add(remaining[0])
 
-        suggestions.append((list(combo_tuple), strong_num, score_dict))
+            if len(combo_set) == 6:
+                combo_tuple = tuple(sorted(combo_set))
+                if combo_tuple not in seen_combos:
+                    seen_combos.add(combo_tuple)
+                    score_dict = score_combination(list(combo_tuple), main_rows, pair_counter, single_counter)
+                    strong_num = random.choice(top_strongs) if top_strongs else (
+                        random.choice(strong_numbers) if strong_numbers else None
+                    )
+                    suggestions.append((list(combo_tuple), strong_num, score_dict))
+
+    # 4. Use 3-number combinations (original approach), add 3 more numbers
+    if len(suggestions) < num_suggestions and size_counters[3]:
+        print(f"  Using 3-number groups, adding 3 more numbers...")
+        for combo, freq in size_counters[3].most_common(top_n_per_size):
+            if len(suggestions) >= num_suggestions:
+                break
+
+            combo_set = set(combo)
+
+            # Add 3 numbers that co-occur most with this group
+            for _ in range(3):
+                candidates = Counter()
+                for num in combo_set:
+                    if num in cooccurrence:
+                        for other_num, cofreq in cooccurrence[num]:
+                            if other_num not in combo_set:
+                                candidates[other_num] += cofreq
+
+                if candidates:
+                    best_num = candidates.most_common(1)[0][0]
+                    combo_set.add(best_num)
+                else:
+                    remaining = [n for n, _ in single_counter.most_common(49) if n not in combo_set]
+                    if remaining:
+                        combo_set.add(remaining[0])
+
+            if len(combo_set) == 6:
+                combo_tuple = tuple(sorted(combo_set))
+                if combo_tuple not in seen_combos:
+                    seen_combos.add(combo_tuple)
+                    score_dict = score_combination(list(combo_tuple), main_rows, pair_counter, single_counter)
+                    strong_num = random.choice(top_strongs) if top_strongs else (
+                        random.choice(strong_numbers) if strong_numbers else None
+                    )
+                    suggestions.append((list(combo_tuple), strong_num, score_dict))
 
     # Sort by score (highest first)
     suggestions.sort(key=lambda x: x[2]['total'], reverse=True)
@@ -425,6 +528,34 @@ def print_combo_stats(combo_freq, size):
     print()
 
 
+def print_all_cooccurrence_stats(main_rows, min_freq=2, top_n=10):
+    """
+    Print statistics about co-occurring groups of all sizes.
+    """
+    print("=" * 70)
+    print("ANALYZING ALL CO-OCCURRENCE PATTERNS (2-6 NUMBERS)")
+    print("=" * 70)
+
+    size_counters = analyze_all_cooccurrence_sizes(main_rows, min_freq=min_freq)
+
+    for size in [6, 5, 4, 3, 2]:
+        counter = size_counters[size]
+        total_count = len(counter)
+
+        if total_count == 0:
+            print(f"\n{size}-number groups: None found with freq >= {min_freq}")
+            continue
+
+        print(f"\n{size}-number groups: {total_count} found")
+        print(f"Top {min(top_n, total_count)} most frequent:")
+
+        for i, (combo, freq) in enumerate(counter.most_common(top_n), 1):
+            nums_str = ", ".join(str(n) for n in combo)
+            print(f"  {i:2d}) ({nums_str}) appeared together {freq} times")
+
+    print()
+
+
 def print_suggestions(suggestions, show_scores=True):
     print("=== Suggested combinations (6 main + strong) ===")
     if not suggestions:
@@ -488,20 +619,25 @@ if __name__ == "__main__":
     triplets_freq = combo_frequencies(main_rows, size=3, min_freq=2)
     print_combo_stats(triplets_freq, size=3)
 
-    # 5) Co-occurrence based suggestions (IMPROVED ALGORITHM)
+    # 5) DETAILED analysis of ALL co-occurrence patterns (2-6 numbers)
+    print_all_cooccurrence_stats(main_rows, min_freq=2, top_n=10)
+
+    # 6) Co-occurrence based suggestions (IMPROVED ALGORITHM)
     print("=" * 70)
-    print("IMPROVED ALGORITHM: Based on numbers appearing together frequently")
+    print("IMPROVED ALGORITHM: Analyzes groups of ALL sizes (2-6 numbers)")
+    print("Prioritizes larger groups that appeared together more frequently")
     print("=" * 70)
     cooccurrence_suggestions = generate_combinations_from_cooccurrence(
         main_rows,
         strong_numbers,
         num_suggestions=10,
-        start_with_top_n_trips=20,
-        strong_top_n=5
+        top_n_per_size=20,
+        strong_top_n=5,
+        min_cooccurrence_freq=2
     )
     print_suggestions(cooccurrence_suggestions, show_scores=True)
 
-    # 6) Random mix suggestions (original algorithm with scoring)
+    # 7) Random mix suggestions (original algorithm with scoring)
     print("=" * 70)
     print("ALTERNATIVE: Random mix of top pairs/triplets with scoring")
     print("=" * 70)
